@@ -1,0 +1,172 @@
+---
+description: 백엔드 개발 패턴 가이드라인
+globs: **/*Service*.kt,**/*Repository*.kt,**/*Controller*.kt,**/*Entity*.kt
+alwaysApply: false
+---
+
+# Workfolio Backend 기술 스택 및 패턴
+
+## 기술 스택
+
+| 카테고리 | 기술 | 버전 |
+|----------|------|------|
+| Language | Kotlin | 2.0.10 |
+| Framework | Spring Boot | 3.4.5 |
+| JVM | Java | 21 |
+| Database | PostgreSQL | (Supabase) |
+| ORM | Spring Data JPA | Hibernate |
+| Migration | Liquibase | 4.31.0 |
+| Cache | Redis | Redisson 3.41.0 |
+| Storage | Supabase Storage | S3 호환 |
+| Auth | Spring Security + OAuth2 | 6.x |
+| JWT | JJWT | 0.12.1 |
+| Serialization | Protocol Buffers | 4.29.2 |
+| Build | Gradle (Kotlin DSL) | - |
+| Testing | Kotest + MockK | - |
+
+## 프로젝트 구조
+
+```
+src/main/kotlin/com/spectrum/workfolio/
+├── config/                  # 설정 (Security, DB, Redis 등)
+├── controllers/             # REST API 엔드포인트
+├── services/                # 비즈니스 로직
+├── domain/
+│   ├── entity/              # JPA 엔티티
+│   ├── repository/          # JpaRepository 인터페이스
+│   ├── dto/                 # DTO
+│   └── enums/               # Enum 타입
+└── utils/                   # 유틸리티
+
+src/main/proto/              # Protocol Buffer 정의
+src/main/resources/db/primary/  # Liquibase 마이그레이션
+```
+
+## 엔티티 패턴
+
+### BaseEntity
+모든 엔티티는 `BaseEntity`를 상속:
+- ID: 커스텀 UUID (접두사 + 14자리), 예: "WK" + UUID = Worker ID
+- `createdAt`, `updatedAt` 감사 필드
+- `Persistable<String>` 구현
+
+### ID 접두사 규칙
+| 엔티티 | 접두사 |
+|--------|--------|
+| Worker | WK |
+| Payment | PA |
+| PaymentTransaction | PT |
+| CreditPlan | CP |
+| CreditHistory | CH |
+| Plan | PL |
+| Record | RC |
+| Resume | RS |
+
+### 엔티티 예시
+```kotlin
+@Entity
+@Table(name = "workers")
+class Worker(
+    id: String,
+    // ...fields
+) : BaseEntity(id, "WK") {
+    // 불변성: setter 대신 changeXxx() 메서드 사용
+    fun changeInfo(nickName: String, phone: String) { ... }
+}
+```
+
+## API 패턴
+
+### 컨트롤러
+- Base path: `/api/{resource}`
+- Request/Response: Protocol Buffers (JSON 변환)
+- 인증: `@AuthenticatedUser` 어노테이션으로 Worker ID 추출
+
+```kotlin
+@RestController
+@RequestMapping("/api/workers")
+class WorkerController(private val workerService: WorkerService) {
+
+    @GetMapping("/me")
+    fun getMe(@AuthenticatedUser workerId: String): WorkerGetResponse {
+        return workerService.getWorker(workerId)
+    }
+}
+```
+
+### 서비스
+- `@Transactional(readOnly = true)` 기본
+- 쓰기 작업에만 `@Transactional`
+- CQRS 패턴: `CommandService` / `QueryService` 분리 가능
+
+## 결제 시스템 (기존)
+
+### Payment 엔티티
+```kotlin
+class Payment(
+    id: String,                    // "PA" 접두사
+    amount: Long,
+    currency: Currency,            // KRW
+    status: PaymentStatus,         // PENDING, COMPLETED, FAILED, REFUNDED
+    paymentMethod: PaymentMethod,  // CARD, CASH
+    paymentProvider: String,
+    providerPaymentId: String,
+    paidAt: LocalDateTime?,
+    refundedAt: LocalDateTime?,
+    refundAmount: Long,
+    refundReason: String?,
+    metadataJson: String?,         // JSONB
+    worker: Worker                 // N:1 관계
+) : BaseEntity(id, "PA")
+```
+
+### PaymentTransaction 엔티티
+```kotlin
+class PaymentTransaction(
+    id: String,                    // "PT" 접두사
+    payment: Payment,              // N:1 관계
+    transactionType: TransactionType, // PAYMENT, REFUND, PARTIAL_REFUND, CANCEL
+    status: String,
+    amount: Long,
+    transactionId: String?,
+    requestData: String?,          // JSONB
+    responseData: String?,         // JSONB
+    errorMessage: String?,
+    receiptUrl: String?
+) : BaseEntity(id, "PT")
+```
+
+## 마이그레이션 (Liquibase)
+
+파일 위치: `src/main/resources/db/primary/`
+
+```yaml
+# 0004-add-credit-system.yaml 예시
+databaseChangeLog:
+  - changeSet:
+      id: add-credit-to-workers
+      author: developer
+      changes:
+        - addColumn:
+            tableName: workers
+            columns:
+              - column:
+                  name: credit
+                  type: INTEGER
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+```
+
+## 주요 엔티티 관계
+
+```
+Worker (사용자)
+├── Payment (결제) 1:N
+│   └── PaymentTransaction (결제 트랜잭션) 1:N
+├── Resume (이력서) 1:N
+├── Career (경력) 1:N
+├── RecordGroup (기록 그룹) 1:N
+├── Account (OAuth 계정) 1:N
+└── WorkerSubscription (구독) 1:N
+```

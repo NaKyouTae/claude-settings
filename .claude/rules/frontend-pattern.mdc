@@ -1,0 +1,97 @@
+---
+description: 프론트엔드 개발 패턴 가이드라인
+globs: workfolio-frontend/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Workfolio Frontend 기술 스택 및 패턴
+
+## 기술 스택
+
+| 카테고리 | 기술 | 버전 |
+|----------|------|------|
+| Framework | Next.js (App Router) | 15.1.9 |
+| UI Library | React | 19.0.1 |
+| Language | TypeScript | 5 |
+| State | Zustand | 5.0.3 |
+| Serialization | Protocol Buffers | ts_proto 2.7.0 |
+| Animation | GSAP | 3.13.0 |
+| DnD | dnd-kit | - |
+| Styling | CSS Modules | - |
+
+## 프로젝트 구조
+
+```
+src/
+├── app/                     # Next.js App Router 페이지
+│   ├── layout.tsx          # 루트 레이아웃
+│   ├── api/                # API 라우트 (BFF 레이어)
+│   └── [pages]/            # 페이지 컴포넌트
+├── components/             # UI 컴포넌트
+│   ├── portal/
+│   │   ├── layouts/       # Header, Footer
+│   │   ├── features/      # 기능별 컴포넌트
+│   │   └── ui/            # 공통 UI
+│   └── admin/             # 관리자 컴포넌트
+├── store/                  # Zustand 스토어
+├── hooks/                  # 커스텀 훅
+├── generated/              # Protobuf 생성 타입
+├── utils/                  # 유틸리티
+└── styles/                 # 글로벌 스타일
+```
+
+## 상태 관리 (Zustand)
+
+```typescript
+import { create } from 'zustand';
+
+interface State {
+  data: T | null;
+  setData: (data: T) => void;
+}
+
+export const useStore = create<State>((set) => ({
+  data: null,
+  setData: (data) => set({ data }),
+}));
+```
+
+## API 통신
+
+### 아키텍처
+```
+Browser → Next.js API Routes (/api/*) → Backend API
+```
+
+### ApiFetchHandler
+- 자동 토큰 갱신 (401 시)
+- httpOnly 쿠키 토큰 저장
+
+### 커스텀 훅 패턴
+```typescript
+export const useData = () => {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    const response = await fetch('/api/data');
+    setData(await response.json());
+    setLoading(false);
+  }, []);
+
+  return { data, loading, fetchData };
+};
+```
+
+## Protocol Buffers
+
+- 생성 타입: `src/generated/`
+- 빌드: `npm run proto`
+
+## 인증
+
+- Access Token: 3시간 만료
+- Refresh Token: 7일 만료
+- 자동 갱신: ApiFetchHandler에서 처리
+
